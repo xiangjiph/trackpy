@@ -235,7 +235,7 @@ class HashBTree(HashBase):
 
 def assign_subnet(source, dest, subnets):
     """ Assign source point and dest point to the same subnet """
-    i1 = source.subnet
+    i1 = source.subnet # None or int
     i2 = dest.subnet
     if i1 is None and i2 is None:
         raise ValueError("No subnet for added destination particle")
@@ -243,7 +243,7 @@ def assign_subnet(source, dest, subnets):
         return
     if i1 is None:  # source did not belong to a subnet before
         # just add it
-        subnets[i2][0].add(source)
+        subnets[i2][0].add(source) # subnets[i2]: ({}, {Point.objects}) tuple of sets
         source.subnet = i2
     elif i2 is None:  # dest did not belong to a subnet before
         # just add it
@@ -251,7 +251,7 @@ def assign_subnet(source, dest, subnets):
         dest.subnet = i1
     else:  # source belongs to subnet i1 before
         # merge the subnets
-        subnets[i2][0].update(subnets[i1][0])
+        subnets[i2][0].update(subnets[i1][0]) # set.update takes an interable and adds multiple elements at once
         subnets[i2][1].update(subnets[i1][1])
         # update the subnet identifiers per point
         for p in itertools.chain(*subnets[i1]):
@@ -334,11 +334,12 @@ class Subnets:
     includes_lost : Boolean
         Whether the source points without linking candidates are included.
     """
-    def __init__(self, source_hash, dest_hash, search_range, max_neighbors=10):
+    def __init__(self, source_hash, dest_hash, search_range, max_neighbors=10, graph_dist_func=None):
         self.max_neighbors = max_neighbors
         self.source_hash = source_hash
         self.dest_hash = dest_hash
         self.search_range = search_range
+        self.graph_dist_func = graph_dist_func
         self.includes_lost = False
         self.reset()
         self.compute()
@@ -360,15 +361,29 @@ class Subnets:
         dest_hash = self.dest_hash
         if len(source_hash.points) == 0 or len(dest_hash.points) == 0:
             return
+        # Find the k-nearest neighbors. Default k is 10. 
+        # Can follow with distance calculation on the graph for the 
+        # vascular data 
         dists, inds = source_hash.query(dest_hash.coords_mapped,
                                         self.max_neighbors, rescale=False,
                                         search_range=self.search_range)
+        # hash.points is a list of trackpy.linking.utils.Point object. 
+        # The subnet assignment is based on the hash table query. 
+        # the `assign_subnet` does not do extra computation, it just merge 
+        # subnets that shares neighbors in adjacent frames
         nn = np.sum(np.isfinite(dists), 1)  # Number of neighbors of each particle
         for i, p in enumerate(dest_hash.points):
             for j in range(nn[i]):
-                wp = source_hash.points[inds[i, j]]
-                wp.forward_cands.append((p, dists[i, j]))
-                assign_subnet(wp, p, self.subnets)
+                wp = source_hash.points[inds[i, j]] # wp.pos: (3, ) array, same order as the pos_columns
+                if self.graph_dist_func is not None:
+                    # Compute pairwise geodesic distance here 
+                    g_dist = self.graph_dist_func(wp.pos, p.pos)
+                    if g_dist <= self.search_range:
+                        wp.forward_cands.append((p, g_dist)) # pairwise is recorded here.
+                        assign_subnet(wp, p, self.subnets)
+                else: 
+                    wp.forward_cands.append((p, dists[i, j])) # pairwise is recorded here.
+                    assign_subnet(wp, p, self.subnets)
 
     def __iter__(self):
         return (self.subnets[key] for key in self.subnets)

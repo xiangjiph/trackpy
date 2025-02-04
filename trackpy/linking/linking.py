@@ -254,6 +254,9 @@ def link_df_iter(f_iter, search_range, pos_columns=None,
         in Euclidean space. Useful for instance to link by Euclidean distance
         starting from radial coordinates. If search_range is anisotropic, this
         parameter cannot be used.
+    graph_dist_func : function, optional 
+        A custom python function that compute the geodesic distance between two 
+        positions (in the same order as pos_columns) along the network. 
 
     Yields
     ------
@@ -270,7 +273,8 @@ def link_df_iter(f_iter, search_range, pos_columns=None,
         pos_columns = guess_pos_columns(f0)
         del f_iter_dummy, f0
 
-    f_iter, f_coords_iter = itertools.tee(f_iter)
+    # default n=2, just duplicate f_iter into 2 independent copies
+    f_iter, f_coords_iter = itertools.tee(f_iter) 
     coords_iter = coords_from_df_iter(f_coords_iter, pos_columns, t_column)
 
     ids_iter = (_ids for _i, _ids in
@@ -364,7 +368,7 @@ class Linker:
     def __init__(self, search_range, memory=0, predictor=None,
                  adaptive_stop=None, adaptive_step=0.95,
                  neighbor_strategy=None, link_strategy=None,
-                 dist_func=None, to_eucl=None):
+                 dist_func=None, to_eucl=None, graph_dist_func=None):
         self.memory = memory
         self.predictor = predictor
         self.track_cls = TrackUnstored
@@ -384,6 +388,7 @@ class Linker:
         self.hash_cls = dict(KDTree=HashKDTree,
                              BTree=HashBTree)[neighbor_strategy]
         self.dist_func = dist_func  # a custom distance function
+        self.graph_dist_func = graph_dist_func # a function for computing the pairwise geodesic distnace in the graph 
         self.to_eucl = to_eucl      # to euclidean coordinates
 
         if link_strategy is None or link_strategy == 'auto':
@@ -504,10 +509,11 @@ class Linker:
         self.coords = value[default_pos_columns(self.ndim)].values
 
     def next_level(self, coords, t, extra_data=None):
+        # Core computation 
         prev_hash = self.update_hash(coords, t, extra_data)
 
         self.subnets = Subnets(prev_hash, self.hash, self.search_range,
-                               self.MAX_NEIGHBORS)
+                               self.MAX_NEIGHBORS, graph_dist_func=self.graph_dist_func)
         spl, dpl = self.assign_links()
         self.apply_links(spl, dpl)
 
@@ -515,7 +521,7 @@ class Linker:
         spl, dpl = [], []
         for source_set, dest_set in self.subnets:
             for sp in source_set:
-                sp.forward_cands.sort(key=lambda x: x[1])
+                sp.forward_cands.sort(key=lambda x: x[1]) # sp.forward_cands: list of (point_object, distance)
 
             sn_spl, sn_dpl = self.subnet_linker(source_set, dest_set,
                                                 self.search_range)

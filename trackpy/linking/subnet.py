@@ -334,15 +334,16 @@ class Subnets:
     includes_lost : Boolean
         Whether the source points without linking candidates are included.
     """
-    def __init__(self, source_hash, dest_hash, search_range, max_neighbors=10, graph_dist_func=None):
+    def __init__(self, source_hash, dest_hash, search_range, max_neighbors=10, graph_dist_func=None, debugQ=False):
         self.max_neighbors = max_neighbors
-        self.source_hash = source_hash
-        self.dest_hash = dest_hash
+        self.source_hash = source_hash # previous positions
+        self.dest_hash = dest_hash # new positions
         self.search_range = search_range
         self.graph_dist_func = graph_dist_func
         self.includes_lost = False
         self.reset()
-        self.compute()
+        if not debugQ:
+            self.compute()
 
     def reset(self):
         """ Clear the subnets and candidates for all points in both frames """
@@ -354,23 +355,39 @@ class Subnets:
             p.subnet = i
             self.subnets[i] = set(), {p}
 
-    def compute(self):
-        """ Evaluate the linking candidates and corresponding subnets, using
-        given `search_range`."""
+    def compute_backward(self):
+        """ 
+        This is the orignal implementation. 
+
+        Evaluate the linking candidates and corresponding subnets, using
+        given `search_range`.
+        
+        """
         source_hash = self.source_hash
         dest_hash = self.dest_hash
         if len(source_hash.points) == 0 or len(dest_hash.points) == 0:
             return
         # Find the k-nearest neighbors. Default k is 10. 
-        # Can follow with distance calculation on the graph for the 
-        # vascular data 
+        # In Trackpy, source_hash has been updated with the motion model in 
+        # `update_hash`. We can update the particle positions here
+        # Why query the source using the dest_hash ???
+
+        # The speed dynamic range is too big. We want to do prediction 
+        # before nearest neighbor query, then cut off by a smaller knn radius
+        # Forward prediction is straightforward - for multiple possible position of a 
+        # source point matched to the same (t + 1) point, use the minimal distnace 
+        # Then what about in the reverse direction? The interpretation when doing 
+        # this in the reverse direction is tricky for particles entering / exciting 
+        # the volume. Conclusion: rewrite this function and do the query the forward direction. 
+
+        # inds: (Ntp1, max_nb), inds[i, j]: the j-th nearest nb in source of the i-th particle in dest
         dists, inds = source_hash.query(dest_hash.coords_mapped,
                                         self.max_neighbors, rescale=False,
                                         search_range=self.search_range)
         # hash.points is a list of trackpy.linking.utils.Point object. 
         # The subnet assignment is based on the hash table query. 
         # the `assign_subnet` does not do extra computation, it just merge 
-        # subnets that shares neighbors in adjacent frames
+        # subnets that share neighbors in adjacent frames
         nn = np.sum(np.isfinite(dists), 1)  # Number of neighbors of each particle
         for i, p in enumerate(dest_hash.points):
             for j in range(nn[i]):
@@ -384,6 +401,45 @@ class Subnets:
                 else: 
                     wp.forward_cands.append((p, dists[i, j])) # pairwise is recorded here.
                     assign_subnet(wp, p, self.subnets)
+
+    def compute(self):
+        """ Evaluate the linking candidates and corresponding subnets, using
+        given `search_range`."""
+        source_hash = self.source_hash
+        dest_hash = self.dest_hash
+        if len(source_hash.points) == 0 or len(dest_hash.points) == 0:
+            return
+        # Find the k-nearest neighbors. Default k is 10. 
+        # Can follow with distance calculation on the graph for the 
+        # vascular data 
+        # In Trackpy, source_hash has been updated with the motion model in 
+        # `update_hash`. We can update the particle positions here
+
+        # inds: (Nt, max_nb), inds[i, j]: the j-th nearest nb in dest of the i-th particle in source
+        # TODO:
+        # 1. What's `source_hash.coords_mapped`? np.ndarray of shape (N, ndim)
+        # 2. Predict next position, one particle might have 0 to several possible positions 
+
+        if self.graph_dist_func is not None:
+            dists, inds = self.graph_dist_func(source_hash, dest_hash, 
+                                               search_range=self.search_range, num_nb=self.max_neighbors)
+        else: 
+            dists, inds = dest_hash.query(source_hash.coords_mapped, 
+                                        self.max_neighbors, rescale=False,
+                                            search_range=self.search_range)
+                
+        # hash.points is a list of trackpy.linking.utils.Point object. 
+        # The subnet assignment is based on the hash table query. 
+        # the `assign_subnet` does not do extra computation, it just merge 
+        # subnets that share neighbors in adjacent frames
+        num_nb = dists.shape[1]
+        for i, p in enumerate(source_hash.points):
+            for j in range(num_nb): 
+                if np.isfinite(dists[i, j]): 
+                    p_d = dest_hash.points[inds[i, j]] # p_d.pos: (3, ) array, same order as the pos_columns
+                    p.forward_cands.append((p_d, dists[i, j])) # pairwise is recorded here.
+                    assign_subnet(p, p_d, self.subnets)
+
 
     def __iter__(self):
         return (self.subnets[key] for key in self.subnets)

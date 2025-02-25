@@ -541,6 +541,7 @@ class Linker:
             # Do linking
             if sp is not None and dp is not None:
                 sp.track.add_point(dp)
+                sp.store_cost(dp)
                 if sp in self.mem_set:  # Very rare
                     self.mem_set.remove(sp)
             elif sp is None:
@@ -549,6 +550,7 @@ class Linker:
             elif dp is None:
                 # add the unmatched source particles to the new
                 # memory set
+                sp.store_cost(dp)
                 new_mem_set.add(sp)
 
             # Clean up

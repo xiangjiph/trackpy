@@ -32,7 +32,9 @@ class SubnetLinker:
 
         self.max_links = min(self.MAX, dest_size)
         self.best_pairs = None
+        # self.best_pairs_cost = None
         self.cur_pairs = deque([])
+        # self.cur_pairs_cost = deque([])
         self.best_sum = np.inf
         self.d_taken = set()
         self.cur_sum = 0
@@ -60,6 +62,7 @@ class SubnetLinker:
                 continue
             # add this pair to the running list
             self.cur_pairs.append((cur_s, cur_d))
+            # self.cur_pairs_cost.append(dist)
             # add the destination point to the exclusion list
             if cur_d is not None:
                 self.d_taken.add(cur_d)
@@ -72,6 +75,7 @@ class SubnetLinker:
                 if self.cur_sum < self.best_sum:
                     self.best_sum = self.cur_sum
                     self.best_pairs = list(self.cur_pairs)
+                    # self.best_pairs_cost = list(self.cur_pairs_cost)
             else:
                 # re curse!
                 self.do_recur(j + 1)
@@ -80,6 +84,7 @@ class SubnetLinker:
             if cur_d is not None:
                 self.d_taken.remove(cur_d)
             self.cur_pairs.pop()
+            # self.cur_pairs_cost.pop()
         pass
 
 

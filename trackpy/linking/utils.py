@@ -102,7 +102,8 @@ class Point:
     example. )
     '''
     __slots__ = ['_track', 'uuid', 't', 'pos', 'id', 'extra_data', 
-                 'forward_cands', 'subnet', 'relocate_neighbors', '__dict__']
+                 'forward_cands', 'forward_cost', 'track_cost', 'num_forward_cands', 
+                 'subnet', 'relocate_neighbors', '__dict__']
     @classmethod
     def reset_counter(cls, c=0):
         cls.counter = itertools.count(c)
@@ -119,6 +120,9 @@ class Point:
             self.extra_data = extra_data
         # self.back_cands = []
         self.forward_cands = []
+        self.forward_cost = []
+        self.track_cost = np.nan
+        self.num_forward_cands = 0
         self.subnet = None
         self.relocate_neighbors = []
 
@@ -166,6 +170,14 @@ class Point:
     def track(self):
         """Returns the track that this :class:`Point` is in.  May be `None` """
         return self._track
+    
+    def store_cost(self, dp):
+        assert len(self.forward_cost) == 0, Exception("Point has stored forward_cost previously.")
+        self.num_forward_cands = len(self.forward_cands)
+        for fp, fc in self.forward_cands:
+            self.forward_cost.append(fc)
+            if fp == dp: # might need a more reliable way to compare particle? 
+                self.track_cost = fc
 
 
 class TrackUnstored:

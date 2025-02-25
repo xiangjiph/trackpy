@@ -410,16 +410,10 @@ class Subnets:
         if len(source_hash.points) == 0 or len(dest_hash.points) == 0:
             return
         # Find the k-nearest neighbors. Default k is 10. 
-        # Can follow with distance calculation on the graph for the 
-        # vascular data 
         # In Trackpy, source_hash has been updated with the motion model in 
         # `update_hash`. We can update the particle positions here
 
         # inds: (Nt, max_nb), inds[i, j]: the j-th nearest nb in dest of the i-th particle in source
-        # TODO:
-        # 1. What's `source_hash.coords_mapped`? np.ndarray of shape (N, ndim)
-        # 2. Predict next position, one particle might have 0 to several possible positions 
-
         if self.graph_dist_func is not None:
             dists, inds = self.graph_dist_func(source_hash, dest_hash, 
                                                search_range=self.search_range, num_nb=self.max_neighbors)
@@ -427,6 +421,13 @@ class Subnets:
             dists, inds = dest_hash.query(source_hash.coords_mapped, 
                                         self.max_neighbors, rescale=False,
                                             search_range=self.search_range)
+        # Additional distance estimation could be done here. 
+        # For example, also compare the similarity in point features (stored as 
+        # hash.points.[0].extra_data, which is a dictionary)
+        # However, how to combine intensity with distnace? Notice that 
+        # in assign_link, lost particle has a default cost of search_range. 
+        # 
+        #
                 
         # hash.points is a list of trackpy.linking.utils.Point object. 
         # The subnet assignment is based on the hash table query. 

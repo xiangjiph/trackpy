@@ -433,14 +433,14 @@ class Subnets:
         # The subnet assignment is based on the hash table query. 
         # the `assign_subnet` does not do extra computation, it just merge 
         # subnets that share neighbors in adjacent frames
-        num_nb = dists.shape[1]
+        num_matched_nb = np.sum(np.isfinite(dists), axis=1)
         for i, p in enumerate(source_hash.points):
-            for j in range(num_nb): 
+            for j in range(num_matched_nb[i]): 
                 if np.isfinite(dists[i, j]): 
                     p_d = dest_hash.points[inds[i, j]] # p_d.pos: (3, ) array, same order as the pos_columns
                     p.forward_cands.append((p_d, dists[i, j])) # pairwise is recorded here.
                     assign_subnet(p, p_d, self.subnets)
-
+            assert np.all(dists[i, num_matched_nb[i]:] == np.inf), ValueError(f"Expect all np.inf. beyond the {num_matched_nb[i]} index in {dists[i]}")
 
     def __iter__(self):
         return (self.subnets[key] for key in self.subnets)

@@ -8,12 +8,13 @@ from collections import deque
 
 import numpy as np
 
-from .utils import SubnetOversizeException
+from .utils import (SubnetOversizeException, Point)
 from ..try_numba import try_numba_jit
 
+LOST_COST_2_SEARCH_RANGE = 3
 
-def recursive_linker_obj(s_sn, dest_size, search_range, max_size=30, diag=False):
-    snl = SubnetLinker(s_sn, dest_size, search_range, max_size=max_size)
+def recursive_linker_obj(s_sn, dest_size, lost_cost, max_size=30, diag=False):
+    snl = SubnetLinker(s_sn, dest_size, lost_cost, max_size=max_size)
     # In Python 3, we must convert to lists to return mutable collections.
     return [list(particles) for particles in zip(*snl.best_pairs)]
 
@@ -21,10 +22,10 @@ def recursive_linker_obj(s_sn, dest_size, search_range, max_size=30, diag=False)
 class SubnetLinker:
     """A helper class for implementing the Crocker-Grier tracking
     algorithm.  This class handles the recursion code for the sub-net linking"""
-    def __init__(self, s_sn, dest_size, search_range, max_size=30):
+    def __init__(self, s_sn, dest_size, lost_cost, max_size=30):
         #        print 'made sub linker'
         self.s_sn = s_sn
-        self.search_range = search_range
+        self.search_range = lost_cost
         self.max_size = max_size
         self.s_lst = [s for s in s_sn]
         self.s_lst.sort(key=lambda x: len(x.forward_cands))
@@ -89,6 +90,9 @@ class SubnetLinker:
 
 
 def nonrecursive_link(source_list, dest_size, search_range, max_size=30, diag=False):
+    """
+        search_range: not used in this function. 
+    """
     source_list = list(source_list)
     source_list.sort(key=lambda x: len(x.forward_cands))
     MAX = len(source_list)
@@ -175,7 +179,7 @@ def nonrecursive_link(source_list, dest_size, search_range, max_size=30, diag=Fa
     return source_list, best_back
 
 
-def numba_link(s_sn, dest_size, search_range, max_size=30, diag=False):
+def numba_link(s_sn, dest_size, lost_cost, max_size=30, diag=False):
     """Recursively find the optimal bonds for a group of particles between 2 frames.
 
     This is only invoked when there is more than one possibility within
@@ -205,7 +209,7 @@ def numba_link(s_sn, dest_size, search_range, max_size=30, diag=False):
     # each row of the array. All other elements represent the null link option
     # (i.e. particle lost)
     candsarray = np.ones((nj, max_candidates), dtype=np.int64) * -1
-    distsarray = np.ones((nj, max_candidates), dtype=np.float64) * search_range
+    distsarray = np.ones((nj, max_candidates), dtype=np.float64) * lost_cost
     ncands = np.zeros((nj,), dtype=np.int64)
     for j, sp in enumerate(src_net):
         ncands[j] = len(sp.forward_cands)
@@ -377,6 +381,12 @@ def subnet_linker_drop(source_set, dest_set, search_range, max_size=30,
 
 
 def subnet_linker_recursive(source_set, dest_set, search_range, **kwargs):
+    """
+        search_range: cost for connecting to the "None point", i.e. the 
+        particle is lost. 
+    
+    """
+    lost_cost = search_range * LOST_COST_2_SEARCH_RANGE
     if len(source_set) == 0 and len(dest_set) == 1:
         # no backwards candidates: particle will get a new track
         return [None], [dest_set.pop()]
@@ -390,9 +400,9 @@ def subnet_linker_recursive(source_set, dest_set, search_range, **kwargs):
     # Add the null candidate that is required by the subnet linker.
     # Forward candidates were already sorted by Linker.assign_links()
     for _s in source_set:
-        _s.forward_cands.append((None, search_range))
+        _s.forward_cands.append((None, lost_cost))
 
-    snl = SubnetLinker(source_set, len(dest_set), search_range, **kwargs)
+    snl = SubnetLinker(source_set, len(dest_set), lost_cost, **kwargs)
     sn_spl, sn_dpl = [list(particles) for particles in zip(*snl.best_pairs)]
 
     for dp in dest_set - set(sn_dpl):
@@ -404,6 +414,8 @@ def subnet_linker_recursive(source_set, dest_set, search_range, **kwargs):
 
 
 def subnet_linker_nonrecursive(source_set, dest_set, search_range, **kwargs):
+    lost_cost = search_range * LOST_COST_2_SEARCH_RANGE
+
     if len(source_set) == 0 and len(dest_set) == 1:
         # no backwards candidates: particle will get a new track
         return [None], [dest_set.pop()]
@@ -415,11 +427,11 @@ def subnet_linker_nonrecursive(source_set, dest_set, search_range, **kwargs):
         return [source_set.pop()], [None]
 
     # Add the null candidate that is required by the subnet linker.
-    # Forward candidates were already sorted by Linker.assign_links()
+    # Forward candidates have already been sorted in Linker.assign_links()
     for _s in source_set:
-        _s.forward_cands.append((None, search_range))
+        _s.forward_cands.append((None, lost_cost))
 
-    sn_spl, sn_dpl = nonrecursive_link(source_set, len(dest_set), search_range, **kwargs)
+    sn_spl, sn_dpl = nonrecursive_link(source_set, len(dest_set), lost_cost, **kwargs)
 
     for dp in dest_set - set(sn_dpl):
         # Unclaimed destination particle in subnet
@@ -442,6 +454,8 @@ def subnet_linker_numba(source_set, dest_set, search_range,
       pure-Python algorithm, which has much less overhead since
       it does not convert to a numpy representation.
     """
+    lost_cost = search_range * LOST_COST_2_SEARCH_RANGE
+
     lss = len(source_set)
     lds = len(dest_set)
     if lss == 0 and lds == 1:
@@ -457,17 +471,18 @@ def subnet_linker_numba(source_set, dest_set, search_range,
     # Add the null candidate that is required by the subnet linker.
     # Forward candidates were already sorted by Linker.assign_links()
     for _s in source_set:
-        _s.forward_cands.append((None, search_range))
+        _s.forward_cands.append((None, lost_cost))
 
     # Shortcut for small subnets, because the numba linker has significant overhead
     if (lds == 1 or lss == 1 or (lds <= 3 and lss <= 3)) and hybrid:
-        sn_spl, sn_dpl = recursive_linker_obj(source_set, lds, search_range, **kwargs)
+        sn_spl, sn_dpl = recursive_linker_obj(source_set, lds, lost_cost, **kwargs)
     else:
-        sn_spl, sn_dpl = numba_link(source_set, lds, search_range, **kwargs)
+        sn_spl, sn_dpl = numba_link(source_set, lds, lost_cost, **kwargs)
 
     for dp in dest_set - set(sn_dpl):
         # Unclaimed destination particle in subnet
-        sn_spl.append(None)
-        sn_dpl.append(dp)
+        if isinstance(dp, Point):
+            sn_spl.append(None)
+            sn_dpl.append(dp)
 
     return sn_spl, sn_dpl

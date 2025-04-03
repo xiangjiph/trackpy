@@ -9,7 +9,7 @@ from ..utils import (guess_pos_columns, default_pos_columns,
 from ..try_numba import NUMBA_AVAILABLE
 from .utils import (Point, TrackUnstored, points_from_arr,
                     coords_from_df, coords_from_df_iter,
-                    SubnetOversizeException)
+                    SubnetOversizeException, ExitPoint)
 from .subnet import HashBTree, HashKDTree, Subnets, split_subnet
 from .subnetlinker import (subnet_linker_recursive, subnet_linker_drop,
                            subnet_linker_numba, subnet_linker_nonrecursive)
@@ -287,7 +287,12 @@ def link_df_iter(f_iter, search_range, pos_columns=None,
 
 def adaptive_link_wrap(source_set, dest_set, search_range, subnet_linker,
                        adaptive_stop=None, adaptive_step=0.95, **kwargs):
-    """Wraps a subnetlinker, making it adaptive."""
+    """Wraps a subnetlinker, making it adaptive.
+        search_range: used for spliting the subnet and as the input to 
+        the subnet_linker. In subnet_linker, the search_range is actually
+        used as the cost for connecting a point to None. 
+    
+    """
     try:
         sn_spl, sn_dpl = subnet_linker(source_set, dest_set,
                                        search_range, **kwargs)
@@ -521,8 +526,19 @@ class Linker:
         spl, dpl = [], []
         for source_set, dest_set in self.subnets:
             for sp in source_set:
+                # A null candidate (None, search_range) is added for each source point in `subnet_linker_nonrecursive`
+                # Add the exit point here ??? what should the cost be? 
+                if 'exit_info' in sp.extra_data: 
+                #     # The exit cost should be less than the default cost for missing particles. 
+                    exit_pt = ExitPoint(*sp.extra_data['exit_info'])
+                    # exit_cost = exit_pt.exit_cost(self.search_range / 2)
+                    exit_cost = exit_pt.ep_dist if exit_pt.ep_dist > 0 else self.search_range / 2
+                    sp.forward_cands.append((exit_pt, exit_cost))
+                    dest_set.add(exit_pt) # seems like a place-holder. sn_dpl won't contain ExitPoint anyway
+                
+                # Sorting is necessary for subnet_linker
                 sp.forward_cands.sort(key=lambda x: x[1]) # sp.forward_cands: list of (point_object, distance)
-
+            # this subnet_linker could be `adaptive_link_wrap`. 
             sn_spl, sn_dpl = self.subnet_linker(source_set, dest_set,
                                                 self.search_range)
             spl.extend(sn_spl)
@@ -530,8 +546,22 @@ class Linker:
 
         # Leftovers
         lost = self.subnets.lost
-        spl.extend(lost)
-        dpl.extend([None] * len(lost))
+        # spl.extend(lost)
+        # dpl.extend([None] * len(lost))
+        # Need to modify this? lost are the points whose subnet is None. 
+        for sp in lost: 
+            # Do we need (None, max_cost) for the lost sp without exit_info? 
+            assert len(sp.forward_cands) == 0, f'lost point has forward candidates {sp.forward_cands}'
+            if 'exit_info' in sp.extra_data: 
+                    exit_pt = ExitPoint(*sp.extra_data['exit_info'])
+                    # exit_cost = exit_pt.exit_cost(self.search_range / 2)
+                    exit_cost = exit_pt.ep_dist if exit_pt.ep_dist > 0 else self.search_range / 2
+                    sp.forward_cands.append((exit_pt, exit_cost)) 
+                    dpl.append(exit_pt)
+            else: 
+                dpl.append(None)
+            
+            spl.append(sp)
 
         return spl, dpl
 
@@ -540,7 +570,10 @@ class Linker:
         for sp, dp in zip(spl, dpl):
             # Do linking
             if sp is not None and dp is not None:
-                sp.track.add_point(dp)
+                if isinstance(dp, Point): 
+                    sp.track.add_point(dp)
+                elif isinstance(dp, ExitPoint): 
+                    sp.extra_data['exitQ'] = True
                 sp.store_cost(dp)
                 if sp in self.mem_set:  # Very rare
                     self.mem_set.remove(sp)

@@ -173,12 +173,31 @@ class Point:
     
     def store_cost(self, dp):
         assert len(self.forward_cost) == 0, Exception("Point has stored forward_cost previously.")
-        self.num_forward_cands = len(self.forward_cands)
+        self.num_forward_cands = 0
         for fp, fc in self.forward_cands:
-            self.forward_cost.append(fc)
-            if fp == dp: # might need a more reliable way to compare particle? 
-                self.track_cost = fc
+            if isinstance(fp, Point): 
+                self.num_forward_cands += 1
+            if fp is not None: 
+                self.forward_cost.append(fc)
+                if (fp == dp): 
+                    assert np.isnan(self.track_cost), ValueError(f"track_cost has been set for point at {self.pos}: {self.track_cost}")
+                    self.track_cost = fc
 
+class ExitPoint:
+    def __init__(self, ep_ind, ep_dist, exit_speed): 
+        self.ep_ind = ep_ind
+        self.ep_dist = ep_dist 
+        self.exit_speed = exit_speed
+    
+    def exit_cost(self, min_cost):
+        # > 0: inside the edge, moving toward the endpoint; < 0: exited. 
+        if self.ep_dist > 0: 
+            # Not exit yet 
+            c = self.ep_dist
+        else: 
+            # already exit
+            c = min_cost
+        return c
 
 class TrackUnstored:
     """
